@@ -1,0 +1,4 @@
+chromedriver
+*.csv
+*.parquet
+/.vscode/
