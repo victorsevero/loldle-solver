@@ -4,19 +4,12 @@ from tqdm import tqdm
 
 
 class Solver:
-    def __init__(self, compare_release=True):
-        self.compare_release = compare_release
+    def __init__(self):
         self.df = pl.read_parquet("preproc.parquet")
         self.all_releases = sorted(self.df["release"].unique())
 
-        self.n_variables = (
-            len(self.df.columns) - 1
-            if compare_release
-            else len(self.df.columns)
-        )
-
     def get_champion_entropy(self, champion):
-        outcomes, _ = self.get_champion_outcomes(champion)
+        outcomes = self.get_champion_outcomes(champion)
 
         _, counts = np.unique(outcomes, return_counts=True, axis=0)
         probs = counts / counts.sum()
@@ -24,33 +17,50 @@ class Solver:
         return calc_entropy(probs)
 
     def get_champion_outcomes(self, champion):
-        outcomes = []
-        outcomes_dict = {}
+        champion_row = self.df.filter(pl.col("name") == champion).row(
+            0,
+            named=True,
+        )
 
-        for answer in self.df["name"]:
-            outcome = self.get_outcome(champion, answer)
-            outcomes.append(outcome)
-            outcomes_dict[answer] = outcome
-        return np.array(outcomes), outcomes_dict
+        outcomes_df = self.df.with_columns(
+            gender=self._vec_get_col_outcome(
+                "gender",
+                champion_row["gender"],
+                is_list_col=False,
+            ),
+            position=self._vec_get_col_outcome(
+                "position",
+                champion_row["position"],
+                is_list_col=True,
+            ),
+            species=self._vec_get_col_outcome(
+                "species",
+                champion_row["species"],
+                is_list_col=True,
+            ),
+            resource=self._vec_get_col_outcome(
+                "resource",
+                champion_row["resource"],
+                is_list_col=False,
+            ),
+            range=self._vec_get_col_outcome(
+                "range",
+                champion_row["range"],
+                is_list_col=True,
+            ),
+            region=self._vec_get_col_outcome(
+                "region",
+                champion_row["region"],
+                is_list_col=True,
+            ),
+            release=self._vec_get_col_outcome(
+                "release",
+                champion_row["release"],
+                is_list_col=False,
+            ),
+        )
 
-    def get_outcome(self, guess, answer):
-        guess_row = self.df.filter(pl.col("name") == guess).row(0)
-        answer_row = self.df.filter(pl.col("name") == answer).row(0)
-        col_outcomes = []
-
-        for i in range(1, self.n_variables):
-            guess_value = guess_row[i]
-            answer_value = answer_row[i]
-            col_outcome = self._get_column_outcome(guess_value, answer_value)
-            col_outcomes.append(col_outcome)
-        if self.compare_release:
-            col_outcome = self._get_release_direction(
-                guess_value,
-                answer_value,
-            )
-            col_outcomes.append(col_outcome)
-
-        return col_outcomes
+        return outcomes_df.to_numpy()[:, 1:].astype(float)
 
     def filter_outcome(self, outcomes_dict, outcome, update_df=True):
         filtered_champs = [k for k, v in outcomes_dict.items() if v == outcome]
@@ -62,22 +72,31 @@ class Solver:
             return df
 
     @staticmethod
-    def _get_column_outcome(guess_value, answer_value):
-        if guess_value == answer_value:
-            return 1
-        if isinstance(guess_value, list) and (
-            set(guess_value) & set(answer_value)
-        ):
-            return 0.5
-        return 0
-
-    @staticmethod
-    def _get_release_direction(guess_value, answer_value):
-        if guess_value < answer_value:
-            return 1
-        if guess_value > answer_value:
-            return -1
-        return 0
+    def _vec_get_col_outcome(col_name, guess_value, is_list_col):
+        if col_name == "release":
+            return (
+                pl.when(pl.col(col_name) > guess_value)
+                .then(1)
+                .when(pl.col(col_name) < guess_value)
+                .then(-1)
+                .otherwise(0)
+            )
+        if is_list_col:
+            return (
+                pl.when(pl.col(col_name) == guess_value)
+                .then(1)
+                .when(
+                    pl.col(col_name).map_elements(
+                        lambda x: any(item in guess_value for item in x)
+                    )
+                )
+                .then(0.5)
+                .otherwise(0)
+            )
+        else:
+            return (
+                pl.when(pl.col(col_name) == guess_value).then(1).otherwise(0)
+            )
 
 
 def calc_entropy(probs):
@@ -103,3 +122,10 @@ if __name__ == "__main__":
         if idx == 10:
             break
         print(f"{key}: {entropies[key]:.2f}")
+
+
+def has_common_elements_with_given(list_from_column, given_list):
+    intersection = pl.Series(list_from_column).arr.intersect(
+        pl.Series(given_list)
+    )
+    return len(intersection) > 0

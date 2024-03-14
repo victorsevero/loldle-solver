@@ -2,3 +2,5 @@ chromedriver
 *.csv
 *.parquet
 /.vscode/
+*.pyc
+*/__pycache__/
