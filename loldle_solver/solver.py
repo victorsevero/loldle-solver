@@ -5,11 +5,36 @@ from tqdm import tqdm
 
 class Solver:
     def __init__(self):
+        self.reset()
+
+    def reset(self):
         self.df = pl.read_parquet("preproc.parquet")
-        self.all_releases = sorted(self.df["release"].unique())
+
+    def run_full_game(self, answer, progress_bar=False):
+        guess_count = 0
+        while True:
+            guess_count += 1
+            guess = self.get_best_guess(progress_bar=progress_bar)
+            if guess == answer:
+                break
+            # TODO: "unvectorize" this for this single case
+            outcomes_df = self.get_champion_outcomes(guess)
+            filtered_df = outcomes_df.filter(pl.col("name") == answer)
+            outcome = filtered_df.to_numpy()[0, 1:].astype(float)
+            self.update_df_with_guess(guess, outcome)
+
+        return guess_count
+
+    def get_best_guess(self, progress_bar=True):
+        entropies = {}
+        for champion in tqdm(self.df["name"], disable=not progress_bar):
+            entropies[champion] = self.get_champion_entropy(champion)
+        guess = max(entropies, key=entropies.get)
+        return guess
 
     def get_champion_entropy(self, champion):
-        outcomes = self.get_champion_outcomes(champion)
+        outcomes_df = self.get_champion_outcomes(champion)
+        outcomes = outcomes_df.to_numpy()[:, 1:].astype(float)
 
         _, counts = np.unique(outcomes, return_counts=True, axis=0)
         probs = counts / counts.sum()
@@ -60,7 +85,21 @@ class Solver:
             ),
         )
 
-        return outcomes_df.to_numpy()[:, 1:].astype(float)
+        return outcomes_df
+
+    def update_df_with_guess(self, guess, outcome):
+        outcome = np.array(outcome).astype(float)
+
+        outcomes_df = self.get_champion_outcomes(guess)
+        outcomes_matrix = outcomes_df.to_numpy()[:, 1:].astype(float)
+        outcomes_dict = {
+            outcomes_df["name"][i]: outcomes_matrix[i]
+            for i in range(len(outcomes_matrix))
+        }
+        filtered_dict = {
+            k: v for k, v in outcomes_dict.items() if np.all(v == outcome)
+        }
+        self.df = self.df.filter(pl.col("name").is_in(filtered_dict.keys()))
 
     def filter_outcome(self, outcomes_dict, outcome, update_df=True):
         filtered_champs = [k for k, v in outcomes_dict.items() if v == outcome]
@@ -70,6 +109,10 @@ class Solver:
             return filtered_champs
         else:
             return df
+
+    @staticmethod
+    def _get_outcome(guess, answer):
+        pass
 
     @staticmethod
     def _vec_get_col_outcome(col_name, guess_value, is_list_col):
@@ -122,10 +165,3 @@ if __name__ == "__main__":
         if idx == 10:
             break
         print(f"{key}: {entropies[key]:.2f}")
-
-
-def has_common_elements_with_given(list_from_column, given_list):
-    intersection = pl.Series(list_from_column).arr.intersect(
-        pl.Series(given_list)
-    )
-    return len(intersection) > 0
