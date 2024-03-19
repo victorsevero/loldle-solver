@@ -25,6 +25,20 @@ class Solver:
 
         return guess_count
 
+    def get_best_guesses(self):
+        entropies = {}
+        for champion in self.df["name"]:
+            entropies[champion] = self.get_champion_entropy(champion)
+        entropies = {
+            k: v
+            for k, v in sorted(
+                entropies.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        }
+        return entropies
+
     def get_best_guess(self, progress_bar=True):
         entropies = {}
         for champion in tqdm(self.df["name"], disable=not progress_bar):
