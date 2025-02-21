@@ -1,6 +1,6 @@
 import polars as pl
 
-df = pl.read_csv("data.csv")
+df = pl.read_csv("loldle.csv")
 df = df.rename({"Range type": "Range"})
 df = df.with_columns(
     Name=pl.col("Name").str.strip_chars().str.replace("&amp;", "&"),

@@ -1,7 +1,10 @@
+import os
 import sys
 
 import numpy as np
 import polars as pl
+
+os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 import pygame
 
 from loldle_solver.solver import Solver
@@ -15,15 +18,33 @@ RED = (255, 0, 0)
 
 
 class Simulator:
+    RESULT_MAP = {
+        "name": {None: WHITE},
+        "gender": {None: WHITE, 0: RED, 1: GREEN},
+        "position": {None: WHITE, 0: RED, 0.5: YELLOW, 1: GREEN},
+        "species": {None: WHITE, 0: RED, 0.5: YELLOW, 1: GREEN},
+        "resource": {None: WHITE, 0: RED, 1: GREEN},
+        "range": {None: WHITE, 0: RED, 0.5: YELLOW, 1: GREEN},
+        "region": {None: WHITE, 0: RED, 0.5: YELLOW, 1: GREEN},
+        "release": {None: WHITE, -1: RED, 1: YELLOW, 0: GREEN},
+    }
+
     def __init__(self):
         pygame.init()
         self.font = pygame.font.Font(None, 80)
+        self.medium_font = pygame.font.Font(None, 48)
         self.small_font = pygame.font.Font(None, 20)
         self.clock = pygame.time.Clock()
         self.width = 1920
-        self.height = 1080
+        self.height = 900
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("LoLdle Solver")
+        self.table_area = pygame.Rect(
+            0.78 * self.width,
+            0.125 * self.height,
+            0.2 * self.width,
+            0.95 * self.height,
+        )
 
         self.color_inactive = WHITE
         self.color_active = pygame.Color("dodgerblue2")
@@ -31,7 +52,7 @@ class Simulator:
 
         self.input_box = pygame.Rect(
             0.33 * self.width,
-            0.2 * self.height,
+            0.05 * self.height,
             0.5 * self.width,
             0.1 * self.height,
         )
@@ -40,29 +61,80 @@ class Simulator:
 
         self.solver = Solver()
         self.displayed_entries = []
+        self.n_possib = len(self.solver.df)
+        self.n_possib_entries = []
+        self.guesses = self.solver.get_best_guesses()
+
+    def draw_left_header(self):
+        text_surf = self.medium_font.render(
+            f"Número de possibilidades: {self.n_possib}",
+            True,
+            WHITE,
+        )
+        self.screen.blit(
+            text_surf,
+            (0.05 * self.height, 0.05 * self.height),
+        )
+
+    def draw_right_header(self):
+        text_surf = self.medium_font.render(
+            "Melhores chutes:",
+            True,
+            WHITE,
+        )
+        self.screen.blit(
+            text_surf,
+            (0.78 * self.width, 0.05 * self.height),
+        )
+
+    def draw_table(self):
+        header_font = self.medium_font
+        entry_font = pygame.font.Font(None, 44)
+
+        headers = ["Campeão", "Info. média"]
+        header_height = header_font.get_linesize()
+        entry_height = entry_font.get_linesize()
+        x_pos = self.table_area.x
+        y_pos = self.table_area.y
+
+        for header in headers:
+            text_surface = header_font.render(header, True, WHITE)
+            self.screen.blit(text_surface, (x_pos, y_pos))
+            x_pos += self.table_area.width / 2
+
+        y_pos += header_height
+        for entry in list(self.guesses.items())[:20]:
+            x_pos = self.table_area.x
+            for column in entry:
+                if isinstance(column, float):
+                    column = f"{column:.2f}"
+                text_surface = entry_font.render(str(column), True, WHITE)
+                self.screen.blit(text_surface, (x_pos, y_pos))
+                x_pos += self.table_area.width / 2
+            y_pos += entry_height
 
     def draw_text_input_box(self):
         pygame.draw.rect(self.screen, self.color, self.input_box, 10)
-        text_surface = self.font.render(self.text, True, WHITE)
+        text_surf = self.font.render(self.text, True, WHITE)
         self.screen.blit(
-            text_surface,
+            text_surf,
             (self.input_box.x + 15, self.input_box.y + 25),
         )
         self.input_box.w = max(
             0.33 * self.width,
-            text_surface.get_width() + 30,
+            text_surf.get_width() + 30,
         )
 
     def draw_button(self, text, position, size=(200, 40)):
         button_rect = pygame.Rect(position, size)
         pygame.draw.rect(self.screen, WHITE, button_rect)
-        text_surface = self.font.render(text, True, BLACK)
-        text_rect = text_surface.get_rect(center=button_rect.center)
-        self.screen.blit(text_surface, text_rect)
+        text_surf = self.font.render(text, True, BLACK)
+        text_rect = text_surf.get_rect(center=button_rect.center)
+        self.screen.blit(text_surf, text_rect)
         return button_rect
 
     def draw_entries(self):
-        y_offset = 0.35 * self.height
+        y_offset = 0.2 * self.height
         square_size = (125, 125)
         gap = 10
 
@@ -74,7 +146,7 @@ class Simulator:
                     self.displayed_entries[idx][key]["rect"] = square_rect
                 square = pygame.draw.rect(
                     self.screen,
-                    value_dict["color"],
+                    self.RESULT_MAP[key][value_dict["result"]],
                     square_rect,
                     width=5,
                 )
@@ -87,6 +159,16 @@ class Simulator:
                 )
 
                 x_offset += square_size[0] + gap
+
+            text_surf = self.medium_font.render(
+                f"Possib.: {self.n_possib_entries[idx]}",
+                True,
+                WHITE,
+            )
+            self.screen.blit(
+                text_surf,
+                (0.15 * self.height, y_offset + square.height // 2 - 15),
+            )
             y_offset += square_size[1] + gap
 
     def draw_multi_line_text(
@@ -150,19 +232,21 @@ class Simulator:
         self.color = self.color_active if self.active else self.color_inactive
 
     def handle_square_click(self, mouse_pos):
-        color_cycle = [WHITE, GREEN, YELLOW, RED]
         for entry in self.displayed_entries:
-            for value_dict in entry.values():
+            for key, value_dict in entry.items():
                 if value_dict["rect"] and value_dict["rect"].collidepoint(
                     mouse_pos
                 ):
-                    current_color_index = color_cycle.index(
-                        value_dict["color"]
+                    result_cycle = list(self.RESULT_MAP[key].keys())
+                    if value_dict["result"] is not None:
+                        result_cycle.remove(None)
+                    current_result_index = result_cycle.index(
+                        value_dict["result"]
                     )
-                    next_color = color_cycle[
-                        (current_color_index + 1) % len(color_cycle)
+                    next_result = result_cycle[
+                        (current_result_index + 1) % len(result_cycle)
                     ]
-                    value_dict["color"] = next_color
+                    value_dict["result"] = next_result
                     break
 
     def handle_events(self):
@@ -186,10 +270,11 @@ class Simulator:
                         for k, v in row.items()
                     }
                     row = {
-                        k: {"value": v, "color": WHITE, "rect": None}
+                        k: {"value": v, "result": None, "rect": None}
                         for k, v in row.items()
                     }
                     self.displayed_entries.append(row)
+                    self.n_possib_entries.append(self.n_possib)
                     print(self.text)
                     self.text = ""
                 elif event.key == pygame.K_BACKSPACE:
@@ -197,17 +282,31 @@ class Simulator:
                 else:
                     self.text += event.unicode
             elif (
-                not self.active
+                (not self.active)
                 and event.type == pygame.KEYDOWN
                 and event.key == pygame.K_RETURN
             ):
-                ...
+                outcome = [
+                    v["result"]
+                    for k, v in self.displayed_entries[-1].items()
+                    if k != "name"
+                ]
+                self.solver.update_df_with_guess(
+                    self.displayed_entries[-1]["name"]["value"],
+                    outcome,
+                )
+                self.n_possib = len(self.solver.df)
+                self.guesses = self.solver.get_best_guesses()
 
     def main_loop(self):
         running = True
         while running:
             self.screen.fill(BLACK)
             self.handle_events()
+
+            self.draw_left_header()
+            self.draw_right_header()
+            self.draw_table()
 
             self.draw_text_input_box()
             self.draw_entries()

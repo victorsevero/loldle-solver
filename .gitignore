@@ -1,7 +1,7 @@
 chromedriver
 *.csv
-*.parquet
 /.vscode/
 *.pyc
 */__pycache__/
 /results.json
+/media/
