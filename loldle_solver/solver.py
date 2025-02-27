@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import polars as pl
 from tqdm import tqdm
 
@@ -25,7 +26,7 @@ class Solver:
 
         return guess_count
 
-    def get_best_guesses(self):
+    def get_best_guesses(self, pandas=False):
         entropies = {}
         for champion in self.df["name"]:
             entropies[champion] = self.get_champion_entropy(champion)
@@ -37,6 +38,11 @@ class Solver:
                 reverse=True,
             )
         }
+        if pandas:
+            return pd.DataFrame(
+                entropies.items(),
+                columns=["Campeão", "Informação Esperada"],
+            ).set_index("Campeão")
         return entropies
 
     def get_best_guess(self, progress_bar=True):
